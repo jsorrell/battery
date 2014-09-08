@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -Werror -pthread
+CFLAGS=-Wall -Werror
 LDFLAGS=
 INC=
 DIRS=bin/ obj/

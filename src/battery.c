@@ -2,17 +2,21 @@
 /* Creation Date: September 6, 2014 */
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <signal.h>
+
+//logging
+#include <string.h>
 #include <time.h>
 #include <stdarg.h>
+
+//signals and branches
+#include <unistd.h>
+#include <signal.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 //file logging not thread safe. Oh well. I really don't care
-#define LOG_FILE_NAME "battery.log"
-#define CHECK_TIME 5
+#define LOG_FILE_NAME "/home/jsorrell/Dropbox/Projects/battery/battery.log"
 #define SLEEP_TIMER_TIME 90
 
 
@@ -21,7 +25,7 @@
 #define STR(s) _STR(s)
 
 FILE* logfile;
-int notificationPid;
+int zenityPid;
 
 char *getTime() {
 	time_t rawtime;
@@ -45,18 +49,8 @@ void Log(const char* format, ...) {
     fflush(logfile);
 }
 
-inline int powerUnplugged()
-{
-	char buffer[30];
-	FILE* powerInfoFile = fopen("/proc/acpi/ac_adapter/ADP0/state","r");
-	fscanf(powerInfoFile, "state: %s\n",buffer);
-	fclose(powerInfoFile);
-	return !strncmp(buffer,"off-line",30);
-}
-
 inline void makeCompSleep()
 {
-	kill(notificationPid,SIGINT);
 	log("Computer Going to Sleep");
 	system("dbus-send --system --print-reply \
 		--dest='org.freedesktop.UPower' \
@@ -64,46 +58,31 @@ inline void makeCompSleep()
 		org.freedesktop.UPower.Suspend");
 }
 
-inline void createSleepTimer(unsigned time)
-{
-	alarm(time);
-}
-
-inline void stopSleepTimer()
-{
-	alarm(0);
-}
-
-
 inline int createNotification()
 {
 	int pid;
-	if (!(pid = fork())) {
-		//child
+	if ( !(pid = fork()) ) {
 		execl("/usr/bin/zenity","zenity","--warning","--text",
-			"The power cord has been unplugged.\nComputer will sleep in " STR(SLEEP_TIMER_TIME) " seconds without action.",
-			"--ok-label=Cancel Sleep", NULL);
+				"The power cord has been unplugged.\nComputer will sleep in " STR(SLEEP_TIMER_TIME) " seconds without action.",
+				"--ok-label=Cancel Sleep", NULL);
 	}
 	return pid;
 }
 
-inline void notificationAnswerHandler(int sig)
+inline void sigHandler(int sig)
 {
-	int status;
-	waitpid(-1, &status, 0);
-	if (!WIFSIGNALED(status) && WEXITSTATUS(status) == 0) {
-		stopSleepTimer();
-		log("Sleep Timer Cancelled by User");
+	if (zenityPid) {
+		kill(zenityPid,SIGTERM);
+		if (sig == SIGUSR1)
+			log("Power Restored");
+		else if (sig == SIGTERM)
+			log("Terminating Notification Controller");
+	} else {
+		if (sig == SIGTERM)
+			log("Terminating Sleep Timer");
 	}
-}
-
-void sigIntHandler(int sig)
-{
-	kill(notificationPid,SIGINT);
-	log("Stopping");
 	exit(0);
 }
-
 
 int main()
 {
@@ -112,28 +91,40 @@ int main()
 		fprintf(stderr, "Could not write to logfile\n");
 		exit(1);
 	}
-	log("Starting");
-	int online = 1;
-	signal(SIGALRM, makeCompSleep);
-	signal(SIGCHLD, notificationAnswerHandler);
-	signal(SIGINT, sigIntHandler);
+	log("Power Unplugged");
 
-	while(1) {
-		if (powerUnplugged()) {
-			if (online) {
-				online = 0;
-				log("Power Unplugged");
-				createSleepTimer(SLEEP_TIMER_TIME);
-				notificationPid = createNotification();
-			}
-		} else {
-			if (!online) {
-				online = 1;
-				stopSleepTimer();
-				kill(notificationPid,SIGINT);
-				log("Power Restored");
-			}
+	int notificationPid;
+	int timerPid = getpid();
+	signal(SIGUSR1,sigHandler);
+	signal(SIGTERM,sigHandler);
+
+	if ( (notificationPid = fork()) ) {
+		//parent
+		zenityPid = 0;
+		//create sleep_timer
+		sleep(SLEEP_TIMER_TIME);
+		kill(notificationPid, SIGTERM);
+		makeCompSleep();
+	} else {
+		setsid();
+		zenityPid = createNotification();
+		if (zenityPid == -1) {
+			log("Fork Error");
+			log("errno: %d",errno);
+			exit(2);
 		}
-		sleep(CHECK_TIME);
+		int status;
+		waitpid(zenityPid,&status,0);
+
+		if (WIFSIGNALED(status)) {
+			//notification terminated by timer. or summit
+		}
+		else if (!WEXITSTATUS(status)) {
+			log("Sleep Timer Cancelled by User");
+			kill(timerPid,SIGTERM);
+		} else {
+			//continue timer and die.
+		}
 	}
+	return 0;
 }
