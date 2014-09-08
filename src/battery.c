@@ -13,7 +13,7 @@
 //file logging not thread safe. Oh well. I really don't care
 #define LOG_FILE_NAME "battery.log"
 #define CHECK_TIME 5
-#define SLEEP_TIMER_TIME 10
+#define SLEEP_TIMER_TIME 90
 
 
 //stringify number
@@ -108,8 +108,10 @@ void sigIntHandler(int sig)
 int main()
 {
 	logfile = fopen(LOG_FILE_NAME,"a");
-	if (logfile == NULL)
+	if (logfile == NULL){
 		fprintf(stderr, "Could not write to logfile\n");
+		exit(1);
+	}
 	log("Starting");
 	int online = 1;
 	signal(SIGALRM, makeCompSleep);
