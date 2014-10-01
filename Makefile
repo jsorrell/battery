@@ -11,6 +11,9 @@ EXECUTABLE=bin/battery
 $(EXECUTABLE): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+install: $(EXECUTABLE)
+	cp src/acadapter.sh /etc/pm/power.d/acadapter.sh
+
 obj/%.o: src/%.c $(DIRSTAMPS)
 	$(CC) $(CFLAGS) $(INC) -c -o $@ $<
 
